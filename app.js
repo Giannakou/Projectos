@@ -52,7 +52,7 @@ function uid(prefix){
 }
 
 /* ---------------------------------------------------------------------
-   SEED DATA — mirrors the "Demo Café" sample data from the Obsidian vault
+   SEED DATA — mirrors the "Demo" sample data from the Obsidian vault
    --------------------------------------------------------------------- */
 function seedData(){
   const cust_acme = uid('cust');
@@ -122,36 +122,38 @@ function seedData(){
 /* =========================================================================
    2) APP STATE — in-memory, με πραγματική αποθήκευση σε αρχείο (βλ. §3).
    =========================================================================
-   Η STATE είναι ένα απλό, συγχρονισμένο (synchronous) object στη μνήμη.
-   Όλος ο υπόλοιπος κώδικας (views, modal, κ.λπ.) διαβάζει/γράφει πάνω στη
-   STATE κανονικά, όπως πριν.
-
-     - loadState(): τρέχει ΜΙΑ φορά στην εκκίνηση (boot) και γεμίζει τη
-       STATE με demo δεδομένα (seedData) σαν αρχικό default. Το boot()
-       συνεχίζει μετά προσπαθώντας να φορτώσει πραγματικά δεδομένα από
-       συνδεδεμένο αρχείο ή από το safety-net cache (βλ. §3).
-     - saveState(): καλείται μετά από κάθε αλλαγή. Σημαδεύει το STATE ως
-       "dirty" (μη γραμμένο ακόμα στο αρχείο) ΚΑΙ προγραμματίζει (1) ένα
-       debounced write στο συνδεδεμένο αρχείο, αν υπάρχει, και (2) ένα
-       debounced αντίγραφο ασφαλείας στο IndexedDB.
+   STATE is a simple, synchronous object in memory.
+   All the rest of the code (views, modal, etc.) reads/writes to the
+   STATE normally, just like before.
+   
+   loadState(): runs ONCE on startup (boot) and populates the
+   STATE with demo data (seedData) as an initial default. The boot()
+   then continues by trying to load actual data from a
+   connected file or from the safety-net cache (see §3).
+   
+   saveState(): is called after every change. It marks the STATE as
+   "dirty" (not yet written to the file) AND schedules (1) a
+   debounced write to the connected file, if one exists, and (2) a
+   debounced backup to IndexedDB.
    --------------------------------------------------------------------- */
 let STATE = null;
 let DIRTY = false; // true = There are changes that are not written in the file
 
 /* ---------------------------------------------------------------------
-   THEME (light/dark) — η ΜΟΝΗ ηθελημένη εξαίρεση στο "no localStorage"
-   της εφαρμογής: είναι απλώς προτίμηση εμφάνισης του UI, όχι δεδομένα
-   επιχείρησης, οπότε δεν έχει νόημα να χάνεται σε κάθε refresh. Όλα τα
-   υπόλοιπα δεδομένα (STATE) συνεχίζουν να ζουν ΜΟΝΟ στη μνήμη όπως πριν.
-   Το <html data-theme="..."> το θέτει ήδη ένα inline script στο
-   index.html ΠΡΙΝ φορτώσει το CSS (αποφεύγει flash λάθος θέματος) — εδώ
-   απλώς συγχρονίζουμε τη μεταβλητή THEME με ό,τι έβαλε εκείνο το script. */
+    THEME (light/dark) — the ONLY intentional exception to the application's
+   "no localStorage" rule: it is simply a UI appearance preference, not business
+   data, so it makes no sense to lose it on every refresh. All other data (STATE)
+   continues to live ONLY in memory as before.
+   The <html data-theme="..."> is already set by an inline script in
+   index.html BEFORE the CSS loads (avoids a flash of the wrong theme) — here
+   we just synchronize the THEME variable with whatever that script set.
+    */
 let THEME = 'dark';
 (function initThemeVar(){
   try{
     const saved = localStorage.getItem('businessos-theme');
     if(saved === 'light' || saved === 'dark') THEME = saved;
-  }catch(e){ /* localStorage μπλοκαρισμένο (π.χ. private mode) -> μένουμε στο 'dark' */ }
+  }catch(e){ /* localStorage blocked (private mode) -> we stay in 'dark' */ }
 })();
 
 function applyTheme(theme){
@@ -166,9 +168,9 @@ function toggleTheme(){
   render();
 }
 
-/** Καλείται ΜΙΑ φορά στο boot(), πριν το πρώτο render(). Γεμίζει τη μνήμη
- *  με demo δεδομένα σαν αρχικό state — το boot() μετά προσπαθεί να τα
- *  αντικαταστήσει με πραγματικά δεδομένα (συνδεδεμένο αρχείο ή cache). */
+/** Called ONCE during boot(), before the first render(). It populates memory
+ *  with demo data as the initial state — boot() then attempts to
+ *  replace them with real data (connected file or cache). */
 async function loadState(){
   STATE = seedData();
   DIRTY = false;
@@ -226,8 +228,8 @@ function wipeAll(){
    αρχείου" όποτε η άδεια δεν είναι πλέον "granted".
    --------------------------------------------------------------------- */
 const FS_SUPPORTED = typeof window !== 'undefined' && 'showSaveFilePicker' in window;
-let FS_HANDLE = null;      // FileSystemFileHandle συνδεδεμένο, ή null
-let PENDING_HANDLE = null; // handle που βρέθηκε στο IndexedDB αλλά χρειάζεται re-request permission
+let FS_HANDLE = null;      // FileSystemFileHandle link or null
+let PENDING_HANDLE = null; // handle in IndexedDB but needs re-request permission
 let AUTOSAVE_TIMER = null;
 let SAFETY_CACHE_TIMER = null;
 
@@ -280,8 +282,8 @@ function scheduleSafetyCache(){
     idbSet('stateCache', JSON.stringify(STATE)).catch(err=> console.error('Σφάλμα τοπικής cache ασφαλείας:', err));
   }, 1200);
 }
-/** Debounced αυτόματο γράψιμο στο συνδεδεμένο αρχείο, λίγο μετά την
- *  τελευταία αλλαγή (ώστε να μη γράφουμε σε κάθε keystroke). */
+/** Debounced auto writting in linked file, after 
+ *  the final change (so we don't write keystroke). */
 function scheduleAutosaveToFile(){
   if(!FS_HANDLE) return;
   clearTimeout(AUTOSAVE_TIMER);
@@ -294,13 +296,13 @@ function startAutosaveInterval(){
   setInterval(()=>{ if(DIRTY && FS_HANDLE) writeStateToFile(); }, 8000);
 }
 
-/** Γράφει ολόκληρο το STATE πάνω στο συνδεδεμένο FileSystemFileHandle. */
+/** Writes all STATE above the linked FileSystemFileHandle. */
 async function writeStateToFile(){
   if(!FS_HANDLE) return false;
   try{
     const perm = await FS_HANDLE.queryPermission({ mode:'readwrite' });
     if(perm !== 'granted'){
-      // Δεν μπορούμε να ζητήσουμε νέα άδεια χωρίς user gesture εδώ.
+      // We can't ask the licence without user gesture here.
       PENDING_HANDLE = FS_HANDLE;
       FS_HANDLE = null;
       updateUnsavedIndicator();
