@@ -3,39 +3,48 @@
    Static, client-only app (built to run on GitHub Pages ή τοπικά, no
    server, no accounts, no network tracking, no build tools/frameworks).
 
-   ΑΠΟΘΗΚΕΥΣΗ (βλ. FILE SYSTEM ACCESS PERSISTENCE παρακάτω για λεπτομέρειες):
-     - Browsers που υποστηρίζουν το File System Access API (Chrome, Edge,
-       και άλλα Chromium): ο χρήστης συνδέει ΕΝΑ αρχείο .json στον δίσκο
-       (`showSaveFilePicker`/`showOpenFilePicker`) και η εφαρμογή γράφει
-       πάνω σε αυτό αυτόματα (debounced μετά από κάθε αλλαγή + περιοδικό
-       interval), μέσω `FileSystemFileHandle.createWritable()`. Το handle
-       αποθηκεύεται σε IndexedDB ώστε να μη χρειάζεται να ξαναδιαλέξει το
-       αρχείο ο χρήστης σε κάθε άνοιγμα (με re-request permission όταν
-       χρειάζεται — δες `tryRestoreFileHandle`/`reconnectPendingHandle`).
-     - Browsers χωρίς υποστήριξη (π.χ. Safari, Firefox): fallback στην
-       παλιά λογική χειροκίνητου "Εξαγωγή" (download) / "Εισαγωγή" (upload).
-     - Σε όλες τις περιπτώσεις κρατάμε επιπλέον ένα ελαφρύ auto-save σε
-       IndexedDB ως τοπικό safety-net cache (ΟΧΙ πηγή αλήθειας — απλώς
-       ώστε να μη χαθούν δεδομένα αν κλείσει κατά λάθος το tab πριν
-       προλάβει να γίνει το write στο δίσκο).
-     - Το "μη αποθηκευμένες αλλαγές" indicator αντανακλά την πραγματική
-       κατάσταση write-to-disk: το DIRTY flag καθαρίζει ΜΟΝΟ όταν η
-       εγγραφή στο αρχείο (ή το χειροκίνητο Εξαγωγή) έχει πράγματι
-       ολοκληρωθεί — όχι απλά όταν η αλλαγή έγινε in-memory.
+   STORAGE (see FILE SYSTEM ACCESS PERSISTENCE below for details):
 
-   ΔΟΜΗ ΑΡΧΕΙΟΥ (blueprint — για τον επόμενο developer):
-     1) APP STATE                 — το STATE object (μνήμη), seedData,
-                                     loadState/saveState.
-     2) FILE SYSTEM PERSISTENCE   — File System Access API (connect/write/
-                                     read αρχείου) + IndexedDB (file handle
-                                     persistence + safety-net cache) +
-                                     fallback download/upload.
-     3) UI LAYER                  — SCHEMAS, modal, router, όλες οι view*
-                                     συναρτήσεις. Διαβάζουν/γράφουν πάνω
-                                     στο STATE. Κάθε "write" (add/edit/
-                                     delete) καλεί saveState(), που
-                                     σημαδεύει "dirty" ΚΑΙ προγραμματίζει
-                                     autosave στο αρχείο + safety-cache.
+   Browsers that support the File System Access API (Chrome, Edge,
+   and other Chromium-based): the user connects ONE .json file on the disk
+   (showSaveFilePicker/showOpenFilePicker) and the application writes
+   to it automatically (debounced after each change + periodic
+   interval), via FileSystemFileHandle.createWritable(). The handle
+   is stored in IndexedDB so the user doesn't have to re-select the
+   file on every open (with re-request permission when
+   needed — see tryRestoreFileHandle/reconnectPendingHandle).
+   
+   Browsers without support (e.g., Safari, Firefox): fallback to the
+   old manual "Export" (download) / "Import" (upload) logic.
+   
+   In all cases, we additionally keep a lightweight auto-save in
+   IndexedDB as a local safety-net cache (NOT the source of truth — just
+   so data isn't lost if the tab is accidentally closed before
+   the write to disk can occur).
+   
+   The "unsaved changes" indicator reflects the actual
+   write-to-disk state: the DIRTY flag is cleared ONLY when the
+   file write (or the manual Export) has actually
+   completed — not just when the change occurred in-memory.
+   
+   FILE STRUCTURE (blueprint — for the next developer):
+   
+   APP STATE                 — the STATE object (memory), seedData,
+   loadState/saveState.
+   
+   FILE SYSTEM PERSISTENCE   — File System Access API (connect/write/
+   read file) + IndexedDB (file handle
+   persistence + safety-net cache) +
+   fallback download/upload.
+   
+   UI LAYER                  — SCHEMAS, modal, router, all view*
+   functions. They read/write to the
+   STATE. Every "write" (add/edit/
+   delete) calls saveState(), which
+   marks as "dirty" AND schedules an
+   autosave to the file + safety-cache.
+
+  
    ========================================================================= */
 
 function uid(prefix){
@@ -127,7 +136,7 @@ function seedData(){
        debounced αντίγραφο ασφαλείας στο IndexedDB.
    --------------------------------------------------------------------- */
 let STATE = null;
-let DIRTY = false; // true = υπάρχουν αλλαγές που δεν έχουν γραφτεί ακόμα στο αρχείο
+let DIRTY = false; // true = There are changes that are not written in the file
 
 /* ---------------------------------------------------------------------
    THEME (light/dark) — η ΜΟΝΗ ηθελημένη εξαίρεση στο "no localStorage"
