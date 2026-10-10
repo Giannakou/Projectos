@@ -120,7 +120,7 @@ function seedData(){
 }
 
 /* =========================================================================
-   2) APP STATE — in-memory, με πραγματική αποθήκευση σε αρχείο (βλ. §3).
+   2) APP STATE — in-memory, with real saving system.
    =========================================================================
    STATE is a simple, synchronous object in memory.
    All the rest of the code (views, modal, etc.) reads/writes to the
@@ -181,51 +181,51 @@ function ensureShape(s){
     if(!(k in s)) s[k] = shape[k];
   }
 }
-/** Σημαδεύει "unsaved changes" και προγραμματίζει το πραγματικό γράψιμο
- *  (στο συνδεδεμένο αρχείο, αν υπάρχει, + safety-net cache σε IndexedDB).
- *  Η οθόνη ήδη ξαναζωγραφίζεται από τον καλούντα (render()) όπως πριν. */
+/** It marks the 'unsaved changes' and it schedules the real writting.
+ *  (in the connected link file, if it's true, + safety-net cache in IndexedDB). */
 function saveState(){
   DIRTY = true;
   updateUnsavedIndicator();
   scheduleSafetyCache();
   scheduleAutosaveToFile();
 }
-/** Το indicator δείχνει την ΠΡΑΓΜΑΤΙΚΗ κατάσταση write-to-disk: το DIRTY
- *  καθαρίζει μόνο όταν η εγγραφή (στο αρχείο ή μέσω Εξαγωγής) έχει όντως
- *  ολοκληρωθεί — βλ. writeStateToFile()/exportData(). */
+/** Το indicator gives the real situation of the write-to-disk: DIRTY
+ *  cleans only the recording (the file  or via export) if it's completed
+ *writeStateToFile()/exportData(). */
 function updateUnsavedIndicator(){
   document.querySelectorAll('[data-unsaved-indicator]').forEach(el=>{
     el.style.display = DIRTY ? '' : 'none';
-    el.textContent = DIRTY ? (FS_HANDLE ? '● αποθήκευση σε εξέλιξη…' : '● μη αποθηκευμένες αλλαγές') : '';
+    el.textContent = DIRTY ? (FS_HANDLE ? '● saving…' : '● non saved changes') : '';
   });
 }
 function resetToSample(){
   STATE = seedData();
   DIRTY = false;
-  toast('Τα δεδομένα επαναφέρθηκαν στο demo σετ. Μην ξεχάσεις να τα εξάγεις αν θες να τα κρατήσεις.');
+  toast('The data returned into the demo set. Do not forget to export if you want to keep them.');
   render();
 }
 function wipeAll(){
   STATE = {owner:{}, business:{}, customers:[], suppliers:[], projects:[], tasks:[], events:[], transactions:[], invoices:[], payments:[], goals:[], kpis:[], alerts:[], documents:[], integrations:[]};
   DIRTY = true;
-  toast('Όλα τα δεδομένα διαγράφηκαν.');
+  toast('Every data has been deleted.');
   render();
 }
 
 /* =========================================================================
-   3) FILE SYSTEM ACCESS PERSISTENCE — write-in-place σε ΕΝΑ αρχείο δίσκου
+   3) FILE SYSTEM ACCESS PERSISTENCE — write-in-place in a local file.
    =========================================================================
-   Browser support: το File System Access API (showSaveFilePicker/
-   showOpenFilePicker/FileSystemFileHandle) υποστηρίζεται σήμερα σε Chrome,
-   Edge, και λοιπά Chromium-based browsers (desktop + Android). ΔΕΝ
-   υποστηρίζεται σε Safari ή Firefox (Σεπτέμβριος 2026) — για αυτούς τους
-   browsers κάνουμε αυτόματα fallback στο παλιό download/upload flow.
-   Γνωστός περιορισμός: η άδεια πρόσβασης (permission) σε ένα αρχείο ΔΕΝ
-   επιμένει αυθαίρετα μεταξύ sessions σε όλους τους browsers/λειτουργικά —
-   το handle το κρατάμε σε IndexedDB, αλλά συχνά χρειάζεται νέο
-   `requestPermission()` (που ΑΠΑΙΤΕΙ user gesture, π.χ. click σε κουμπί)
-   στο επόμενο άνοιγμα. Γι' αυτό δείχνουμε ένα κουμπί "Επανασύνδεση
-   αρχείου" όποτε η άδεια δεν είναι πλέον "granted".
+   Browser support: The File System Access API (showSaveFilePicker/
+   showOpenFilePicker/FileSystemFileHandle) is currently supported in Chrome,
+   Edge, and other Chromium-based browsers (desktop + Android). It is NOT
+   supported in Safari or Firefox (as of September 2026)—for these
+   browsers, we automatically fall back to the legacy download/upload flow.
+   Known limitation: file access permission does NOT
+   persist across sessions in all browsers/operating systems—
+   we store the handle in IndexedDB, but a new `requestPermission()`
+   call (which REQUIRES a user gesture, e.g., a button click)
+   is often needed upon reopening. That is why we display a "Reconnect
+   file" button whenever the permission is no longer "granted".
+ 
    --------------------------------------------------------------------- */
 const FS_SUPPORTED = typeof window !== 'undefined' && 'showSaveFilePicker' in window;
 let FS_HANDLE = null;      // FileSystemFileHandle link or null
