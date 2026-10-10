@@ -233,9 +233,9 @@ let PENDING_HANDLE = null; // handle in IndexedDB but needs re-request permissio
 let AUTOSAVE_TIMER = null;
 let SAFETY_CACHE_TIMER = null;
 
-/** Ελαφρύ IndexedDB key-value store (χωρίς εξαρτήσεις) για:
- *   - 'fileHandle': το FileSystemFileHandle του συνδεδεμένου αρχείου
- *   - 'stateCache': ένα JSON string safety-net αντίγραφο του STATE */
+/** Light IndexedDB key-value store (without indipendence) for:
+ *   - 'fileHandle': το FileSystemFileHandle linked file
+ *   - 'stateCache': a JSON string safety-net copy of STATE */
 const IDB_NAME = 'projectos-db', IDB_STORE = 'kv';
 function idbOpen(){
   return new Promise((resolve, reject)=>{
@@ -273,13 +273,13 @@ async function idbDelete(key){
   });
 }
 
-/** Debounced αντίγραφο ασφαλείας στο IndexedDB — ΟΧΙ πηγή αλήθειας, μόνο
- *  για να μη χαθούν δεδομένα αν το tab κλείσει απότομα πριν προλάβει το
- *  πραγματικό write στο αρχείο. */
+/** Debounced backup to IndexedDB — NOT the source of truth; intended
+ *  only to prevent data loss if the tab closes abruptly before the
+ *  actual write to the file takes place. */
 function scheduleSafetyCache(){
   clearTimeout(SAFETY_CACHE_TIMER);
   SAFETY_CACHE_TIMER = setTimeout(()=>{
-    idbSet('stateCache', JSON.stringify(STATE)).catch(err=> console.error('Σφάλμα τοπικής cache ασφαλείας:', err));
+    idbSet('stateCache', JSON.stringify(STATE)).catch(err=> console.error('Error local cache security:', err));
   }, 1200);
 }
 /** Debounced auto writting in linked file, after 
@@ -289,9 +289,11 @@ function scheduleAutosaveToFile(){
   clearTimeout(AUTOSAVE_TIMER);
   AUTOSAVE_TIMER = setTimeout(()=>{ writeStateToFile(); }, 4000);
 }
-/** Επιπλέον περιοδικό safety-net interval (κάθε 8s) — αν για κάποιο λόγο
- *  ο debounce δεν προλάβει (π.χ. συνεχόμενες αλλαγές), αυτό εγγυάται ότι
- *  δεν περνάνε πάνω από λίγα δευτερόλεπτα με unsaved αλλαγές. */
+
+/** Additional periodic safety-net interval (every 8s) — if for some reason
+ *  the debounce mechanism fails to trigger in time (e.g., due to continuous changes),
+ *  this guarantees that no more than a few seconds elapse with unsaved changes. */
+
 function startAutosaveInterval(){
   setInterval(()=>{ if(DIRTY && FS_HANDLE) writeStateToFile(); }, 8000);
 }
@@ -316,8 +318,8 @@ async function writeStateToFile(){
     updateUnsavedIndicator();
     return true;
   }catch(err){
-    console.error('Σφάλμα εγγραφής στο αρχείο:', err);
-    toast('Αποτυχία αυτόματης αποθήκευσης στο αρχείο.', true);
+    console.error('Error writting to file:', err);
+    toast('Automatic save to file failed.', true);
     return false;
   }
 }
