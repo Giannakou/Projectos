@@ -1,59 +1,8 @@
-/* =========================================================================
-   ProjectOS — Owner Cockpit
-   Static, client-only app (built to run on GitHub Pages ή τοπικά, no
-   server, no accounts, no network tracking, no build tools/frameworks).
-
-   STORAGE (see FILE SYSTEM ACCESS PERSISTENCE below for details):
-
-   Browsers that support the File System Access API (Chrome, Edge,
-   and other Chromium-based): the user connects ONE .json file on the disk
-   (showSaveFilePicker/showOpenFilePicker) and the application writes
-   to it automatically (debounced after each change + periodic
-   interval), via FileSystemFileHandle.createWritable(). The handle
-   is stored in IndexedDB so the user doesn't have to re-select the
-   file on every open (with re-request permission when
-   needed — see tryRestoreFileHandle/reconnectPendingHandle).
-   
-   Browsers without support (e.g., Safari, Firefox): fallback to the
-   old manual "Export" (download) / "Import" (upload) logic.
-   
-   In all cases, we additionally keep a lightweight auto-save in
-   IndexedDB as a local safety-net cache (NOT the source of truth — just
-   so data isn't lost if the tab is accidentally closed before
-   the write to disk can occur).
-   
-   The "unsaved changes" indicator reflects the actual
-   write-to-disk state: the DIRTY flag is cleared ONLY when the
-   file write (or the manual Export) has actually
-   completed — not just when the change occurred in-memory.
-   
-   FILE STRUCTURE (blueprint — for the next developer):
-   
-   APP STATE                 — the STATE object (memory), seedData,
-   loadState/saveState.
-   
-   FILE SYSTEM PERSISTENCE   — File System Access API (connect/write/
-   read file) + IndexedDB (file handle
-   persistence + safety-net cache) +
-   fallback download/upload.
-   
-   UI LAYER                  — SCHEMAS, modal, router, all view*
-   functions. They read/write to the
-   STATE. Every "write" (add/edit/
-   delete) calls saveState(), which
-   marks as "dirty" AND schedules an
-   autosave to the file + safety-cache.
-
-  
-   ========================================================================= */
 
 function uid(prefix){
   return (prefix ? prefix + '_' : '') + Math.random().toString(36).slice(2,9) + Date.now().toString(36).slice(-4);
 }
 
-/* ---------------------------------------------------------------------
-   SEED DATA — mirrors the "Demo" sample data from the Obsidian vault
-   --------------------------------------------------------------------- */
 function seedData(){
   const cust_acme = uid('cust');
   const sup_coffee = uid('sup');
@@ -119,41 +68,15 @@ function seedData(){
   };
 }
 
-/* =========================================================================
-   2) APP STATE — in-memory, with real saving system.
-   =========================================================================
-   STATE is a simple, synchronous object in memory.
-   All the rest of the code (views, modal, etc.) reads/writes to the
-   STATE normally, just like before.
-   
-   loadState(): runs ONCE on startup (boot) and populates the
-   STATE with demo data (seedData) as an initial default. The boot()
-   then continues by trying to load actual data from a
-   connected file or from the safety-net cache (see §3).
-   
-   saveState(): is called after every change. It marks the STATE as
-   "dirty" (not yet written to the file) AND schedules (1) a
-   debounced write to the connected file, if one exists, and (2) a
-   debounced backup to IndexedDB.
-   --------------------------------------------------------------------- */
 let STATE = null;
-let DIRTY = false; // true = There are changes that are not written in the file
+let DIRTY = false;
 
-/* ---------------------------------------------------------------------
-    THEME (light/dark) — the ONLY intentional exception to the application's
-   "no localStorage" rule: it is simply a UI appearance preference, not business
-   data, so it makes no sense to lose it on every refresh. All other data (STATE)
-   continues to live ONLY in memory as before.
-   The <html data-theme="..."> is already set by an inline script in
-   index.html BEFORE the CSS loads (avoids a flash of the wrong theme) — here
-   we just synchronize the THEME variable with whatever that script set.
-    */
 let THEME = 'dark';
 (function initThemeVar(){
   try{
     const saved = localStorage.getItem('businessos-theme');
     if(saved === 'light' || saved === 'dark') THEME = saved;
-  }catch(e){ /* localStorage blocked (private mode) -> we stay in 'dark' */ }
+  }catch(e){  }
 })();
 
 function applyTheme(theme){
@@ -168,9 +91,7 @@ function toggleTheme(){
   render();
 }
 
-/** Called ONCE during boot(), before the first render(). It populates memory
- *  with demo data as the initial state — boot() then attempts to
- *  replace them with real data (connected file or cache). */
+
 async function loadState(){
   STATE = seedData();
   DIRTY = false;
@@ -181,17 +102,14 @@ function ensureShape(s){
     if(!(k in s)) s[k] = shape[k];
   }
 }
-/** It marks the 'unsaved changes' and it schedules the real writting.
- *  (in the connected link file, if it's true, + safety-net cache in IndexedDB). */
+
 function saveState(){
   DIRTY = true;
   updateUnsavedIndicator();
   scheduleSafetyCache();
   scheduleAutosaveToFile();
 }
-/** Το indicator gives the real situation of the write-to-disk: DIRTY
- *  cleans only the recording (the file  or via export) if it's completed
- *writeStateToFile()/exportData(). */
+
 function updateUnsavedIndicator(){
   document.querySelectorAll('[data-unsaved-indicator]').forEach(el=>{
     el.style.display = DIRTY ? '' : 'none';
@@ -211,31 +129,13 @@ function wipeAll(){
   render();
 }
 
-/* =========================================================================
-   3) FILE SYSTEM ACCESS PERSISTENCE — write-in-place in a local file.
-   =========================================================================
-   Browser support: The File System Access API (showSaveFilePicker/
-   showOpenFilePicker/FileSystemFileHandle) is currently supported in Chrome,
-   Edge, and other Chromium-based browsers (desktop + Android). It is NOT
-   supported in Safari or Firefox (as of September 2026)—for these
-   browsers, we automatically fall back to the legacy download/upload flow.
-   Known limitation: file access permission does NOT
-   persist across sessions in all browsers/operating systems—
-   we store the handle in IndexedDB, but a new `requestPermission()`
-   call (which REQUIRES a user gesture, e.g., a button click)
-   is often needed upon reopening. That is why we display a "Reconnect
-   file" button whenever the permission is no longer "granted".
- 
-   --------------------------------------------------------------------- */
+
 const FS_SUPPORTED = typeof window !== 'undefined' && 'showSaveFilePicker' in window;
-let FS_HANDLE = null;      // FileSystemFileHandle link or null
-let PENDING_HANDLE = null; // handle in IndexedDB but needs re-request permission
+let FS_HANDLE = null;
+let PENDING_HANDLE = null;
 let AUTOSAVE_TIMER = null;
 let SAFETY_CACHE_TIMER = null;
 
-/** Light IndexedDB key-value store (without indipendence) for:
- *   - 'fileHandle': το FileSystemFileHandle linked file
- *   - 'stateCache': a JSON string safety-net copy of STATE */
 const IDB_NAME = 'projectos-db', IDB_STORE = 'kv';
 function idbOpen(){
   return new Promise((resolve, reject)=>{
@@ -273,38 +173,31 @@ async function idbDelete(key){
   });
 }
 
-/** Debounced backup to IndexedDB — NOT the source of truth; intended
- *  only to prevent data loss if the tab closes abruptly before the
- *  actual write to the file takes place. */
 function scheduleSafetyCache(){
   clearTimeout(SAFETY_CACHE_TIMER);
   SAFETY_CACHE_TIMER = setTimeout(()=>{
     idbSet('stateCache', JSON.stringify(STATE)).catch(err=> console.error('Error local cache security:', err));
   }, 1200);
 }
-/** Debounced auto writting in linked file, after 
- *  the final change (so we don't write keystroke). */
+
 function scheduleAutosaveToFile(){
   if(!FS_HANDLE) return;
   clearTimeout(AUTOSAVE_TIMER);
   AUTOSAVE_TIMER = setTimeout(()=>{ writeStateToFile(); }, 4000);
 }
 
-/** Additional periodic safety-net interval (every 8s) — if for some reason
- *  the debounce mechanism fails to trigger in time (e.g., due to continuous changes),
- *  this guarantees that no more than a few seconds elapse with unsaved changes. */
 
 function startAutosaveInterval(){
   setInterval(()=>{ if(DIRTY && FS_HANDLE) writeStateToFile(); }, 8000);
 }
 
-/** Writes all STATE above the linked FileSystemFileHandle. */
+
 async function writeStateToFile(){
   if(!FS_HANDLE) return false;
   try{
     const perm = await FS_HANDLE.queryPermission({ mode:'readwrite' });
     if(perm !== 'granted'){
-      // We can't ask the licence without user gesture here.
+
       PENDING_HANDLE = FS_HANDLE;
       FS_HANDLE = null;
       updateUnsavedIndicator();
@@ -324,10 +217,8 @@ async function writeStateToFile(){
   }
 }
 
-/** Άνοιγμα save-picker για ΝΕΟ αρχείο σύνδεσης (ή αντικατάσταση υπάρχοντος
- *  συνδεδεμένου αρχείου με άλλο). Γράφει αμέσως το τρέχον STATE εκεί. */
 async function connectFile(){
-  if(!FS_SUPPORTED){ toast('Ο browser δεν υποστηρίζει αποθήκευση σε αρχείο εδώ. Χρησιμοποίησε Εξαγωγή/Εισαγωγή.', true); return; }
+  if(!FS_SUPPORTED){ toast('This browser does not support file saving. Use Export/Import.', true); return; }
   try{
     const handle = await window.showSaveFilePicker({
       suggestedName: 'projectos.json',
@@ -337,19 +228,18 @@ async function connectFile(){
     PENDING_HANDLE = null;
     await idbSet('fileHandle', handle);
     await writeStateToFile();
-    toast('Το αρχείο συνδέθηκε — οι αλλαγές θα αποθηκεύονται αυτόματα εκεί.');
+    toast('Connected File — changes are going to be saved there.');
     render();
   }catch(err){
-    if(err && err.name !== 'AbortError'){ console.error('Σφάλμα σύνδεσης αρχείου:', err); toast('Αποτυχία σύνδεσης αρχείου.', true); }
+    if(err && err.name !== 'AbortError'){ console.error('Error - Disconnected file :', err); toast('Could not connect to the file.', true); }
   }
 }
-/** Άνοιγμα ΥΠΑΡΧΟΝΤΟΣ .json (π.χ. από προηγούμενο export) και σύνδεσή του
- *  σαν το write-in-place αρχείο εφεξής — φορτώνει το περιεχόμενό του. */
+
 async function openAndConnectFile(){
-  if(!FS_SUPPORTED){ toast('Ο browser δεν υποστηρίζει αυτή τη λειτουργία εδώ. Χρησιμοποίησε Εισαγωγή.', true); return; }
+  if(!FS_SUPPORTED){ toast('This browser does not suppirt this. Use Import.', true); return; }
   try{
     const [handle] = await window.showOpenFilePicker({
-      types: [{ description:'ProjectOS JSON', accept:{ 'application/json':['.json'] } }],
+      types: [{ description:'ProjectOS JSON', accept:{ 'application/json':['invalid .json'] } }],
       multiple: false
     });
     const file = await handle.getFile();
@@ -360,26 +250,21 @@ async function openAndConnectFile(){
     PENDING_HANDLE = null;
     await idbSet('fileHandle', handle);
     DIRTY = false;
-    toast('Το αρχείο συνδέθηκε και φορτώθηκε.');
+    toast('The file has been connected.');
     render();
   }catch(err){
-    if(err && err.name !== 'AbortError'){ console.error('Σφάλμα ανοίγματος αρχείου:', err); toast('Αποτυχία ανοίγματος αρχείου (μη έγκυρο JSON;).', true); }
+    if(err && err.name !== 'AbortError'){ console.error('Error opening the file:', err); toast('Failure opening the file ( JSON;).', true); }
   }
 }
-/** Αποσύνδεση του συνδεδεμένου αρχείου — επιστροφή σε καθαρό download/
- *  upload mode. Δεν διαγράφει τα δεδομένα από τη μνήμη. */
+
 async function disconnectFile(){
   FS_HANDLE = null;
   PENDING_HANDLE = null;
   await idbDelete('fileHandle');
-  toast('Το αρχείο αποσυνδέθηκε. Χρησιμοποίησε Εξαγωγή/Εισαγωγή από εδώ και πέρα.');
+  toast('The file has been disconnected. Use Export/Import from now on.');
   render();
 }
-/** Καλείται στο boot(): προσπαθεί να ξαναβρεί το συνδεδεμένο αρχείο από
- *  προηγούμενο session μέσω IndexedDB. Αν η άδεια είναι ήδη "granted"
- *  (χωρίς να χρειάζεται user gesture), φορτώνει απευθείας το περιεχόμενό
- *  του σαν STATE. Αλλιώς κρατάει το handle σε αναμονή (PENDING_HANDLE)
- *  ώστε το UI να δείξει κουμπί "Επανασύνδεση". */
+
 async function tryRestoreFileHandle(){
   if(!FS_SUPPORTED) return;
   try{
@@ -397,16 +282,15 @@ async function tryRestoreFileHandle(){
       PENDING_HANDLE = handle;
     }
   }catch(err){
-    console.error('Αποτυχία επαναφοράς συνδεδεμένου αρχείου:', err);
+    console.error('Failure to restore linked file :', err);
   }
 }
-/** Κουμπί "Επανασύνδεση αρχείου" — ΑΠΑΙΤΕΙ user gesture (click), γι' αυτό
- *  δεν μπορεί να τρέξει αυτόματα στο boot(). */
+
 async function reconnectPendingHandle(){
   if(!PENDING_HANDLE) return;
   try{
     const perm = await PENDING_HANDLE.requestPermission({ mode:'readwrite' });
-    if(perm !== 'granted'){ toast('Δεν δόθηκε άδεια πρόσβασης στο αρχείο.', true); return; }
+    if(perm !== 'granted'){ toast('Access permision to the file was not granted.', true); return; }
     const file = await PENDING_HANDLE.getFile();
     const imported = JSON.parse(await file.text());
     ensureShape(imported);
@@ -414,17 +298,14 @@ async function reconnectPendingHandle(){
     FS_HANDLE = PENDING_HANDLE;
     PENDING_HANDLE = null;
     DIRTY = false;
-    toast('Το αρχείο επανασυνδέθηκε.');
+    toast('File has been reconnected.');
     render();
   }catch(err){
-    console.error('Σφάλμα επανασύνδεσης αρχείου:', err);
-    toast('Αποτυχία επανασύνδεσης αρχείου.', true);
+    console.error('Error - Could not restore the file:', err);
+    toast('Failure in reconnection.', true);
   }
 }
-/** Καλείται στο boot() ΜΟΝΟ αν δεν βρέθηκε συνδεδεμένο αρχείο — φορτώνει
- *  σιωπηλά το τελευταίο safety-net αντίγραφο από IndexedDB, αν υπάρχει,
- *  ώστε να μη χαθεί δουλειά από απότομο κλείσιμο tab σε προηγούμενη
- *  συνεδρία. */
+
 async function tryRestoreSafetyCache(){
   try{
     const cached = await idbGet('stateCache');
@@ -432,19 +313,14 @@ async function tryRestoreSafetyCache(){
     const parsed = JSON.parse(cached);
     ensureShape(parsed);
     STATE = parsed;
-    DIRTY = true; // δεν έχει επιβεβαιωθεί ότι είναι γραμμένο σε αρχείο ακόμα
-    toast('Ανακτήθηκαν δεδομένα από προηγούμενη μη αποθηκευμένη συνεδρία (τοπική cache).');
+    DIRTY = true; 
+    toast('Data recovered from a previous unsaved session (local cache).');
   }catch(err){
-    // καμία cache ακόμα — φυσιολογικό στην πρώτη χρήση
+    
   }
 }
 
-/* ---------------------------------------------------------------------
-   FALLBACK — χειροκίνητο export (download) / import (upload) .json.
-   Παραμένει διαθέσιμο ΠΑΝΤΑ (ακόμα και με συνδεδεμένο αρχείο) σαν επιπλέον
-   αντίγραφο ασφαλείας, και είναι η ΜΟΝΗ επιλογή σε browsers χωρίς File
-   System Access API υποστήριξη (π.χ. Safari, Firefox).
-   --------------------------------------------------------------------- */
+
 function exportData(){
   const dataStr = JSON.stringify(STATE, null, 2);
   const blob = new Blob([dataStr], { type: 'application/json' });
@@ -461,9 +337,7 @@ function exportData(){
   if(!FS_HANDLE){ DIRTY = false; updateUnsavedIndicator(); }
   toast('Τα δεδομένα εξήχθησαν (' + a.download + ').');
 }
-/** Διαβάζει ένα .json αρχείο (από προηγούμενο export) και αντικαθιστά
- *  ολόκληρο το STATE. `event` είναι το change-event ενός <input type=file>.
- *  ΔΕΝ επηρεάζει τυχόν συνδεδεμένο FS_HANDLE — απλή αντικατάσταση STATE. */
+
 function importData(event){
   const file = event.target.files && event.target.files[0];
   if(!file) return;
@@ -472,68 +346,64 @@ function importData(event){
   reader.onload = (e)=>{
     try{
       const imported = JSON.parse(e.target.result);
-      ensureShape(imported); // συμπληρώνει τυχόν πεδία που λείπουν
+      ensureShape(imported); 
       STATE = imported;
-      saveState(); // νέο περιεχόμενο -> θέλει γράψιμο στο συνδεδεμένο αρχείο, αν υπάρχει
-      toast('Τα δεδομένα εισήχθησαν επιτυχώς.');
+      saveState(); 
+      toast('Data has been imported correctly.');
       render();
     }catch(err){
-      console.error('Σφάλμα εισαγωγής αρχείου:', err);
-      toast('Το αρχείο δεν είναι έγκυρο JSON backup.', true);
+      console.error('Failure in import:', err);
+      toast('Invalid JSON backup.', true);
     }
   };
-  reader.onerror = ()=> toast('Σφάλμα κατά την ανάγνωση του αρχείου.', true);
+  reader.onerror = ()=> toast('Error in file reading.', true);
   reader.readAsText(file);
-  event.target.value = ''; // ώστε να μπορεί να επιλεγεί ξανά το ίδιο αρχείο
+  event.target.value = ''; 
 }
 
-/** Reusable widget αποθήκευσης (buttons + "μη αποθηκευμένες αλλαγές"
- *  ένδειξη). Χρησιμοποιείται σε >1 σημεία του UI (sidebar, mobile
- *  "Περισσότερα" sheet, Settings) — το `idPrefix` κρατάει τα ids μοναδικά.
- *  Το περιεχόμενο αλλάζει ανάλογα με την κατάσταση σύνδεσης αρχείου. */
 function backupControlsHtml(idPrefix){
   const fileInputHtml = `<input type="file" id="${idPrefix}-file-import" accept=".json,application/json" style="display:none">`;
   const manualBtnsHtml = `
     <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:6px;">
-      <button id="${idPrefix}-btn-export">${FS_HANDLE ? 'Λήψη αντιγράφου (.json)' : 'Εξαγωγή (.json)'}</button>
-      <button id="${idPrefix}-btn-import-trigger">Εισαγωγή (.json)</button>
+      <button id="${idPrefix}-btn-export">${FS_HANDLE ? 'Backup download (.json)' : 'Export (.json)'}</button>
+      <button id="${idPrefix}-btn-import-trigger">Import (.json)</button>
       ${fileInputHtml}
     </div>
   `;
 
   if(!FS_SUPPORTED){
     return `
-      <div class="fs-note">⚠ Αυτός ο browser δεν υποστηρίζει αποθήκευση απευθείας σε αρχείο (File System Access API — π.χ. Safari/Firefox). Χρησιμοποίησε χειροκίνητη Εξαγωγή/Εισαγωγή.</div>
+      <div class="fs-note">⚠ This browser does not supprt automated saving in this file (File System Access API — For example Safari/Firefox). Use manual Export/Import.</div>
       <span data-unsaved-indicator style="display:${DIRTY?'':'none'};color:var(--danger,#e2564b);font-weight:600;"></span>
       ${manualBtnsHtml}
     `;
   }
   if(PENDING_HANDLE && !FS_HANDLE){
     return `
-      <div class="fs-note">🔒 Το προηγούμενα συνδεδεμένο αρχείο χρειάζεται εκ νέου άδεια πρόσβασης.</div>
-      <div style="margin-top:4px;"><button id="${idPrefix}-btn-reconnect">Επανασύνδεση αρχείου</button></div>
+      <div class="fs-note">🔒 The previous file requires new access permision .</div>
+      <div style="margin-top:4px;"><button id="${idPrefix}-btn-reconnect">File reconnection</button></div>
       ${manualBtnsHtml}
     `;
   }
   if(!FS_HANDLE){
     return `
-      <div class="fs-note">Δεν υπάρχει συνδεδεμένο αρχείο — τα δεδομένα ζουν στη μνήμη (+ τοπική cache ασφαλείας).</div>
+      <div class="fs-note">There is not any connected file — data lives in the memory.</div>
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:6px;">
-        <button id="${idPrefix}-btn-connect-new">Νέο αρχείο…</button>
-        <button id="${idPrefix}-btn-connect-open">Άνοιγμα αρχείου…</button>
+        <button id="${idPrefix}-btn-connect-new">New file…</button>
+        <button id="${idPrefix}-btn-connect-open">Open file…</button>
       </div>
       ${manualBtnsHtml}
     `;
   }
   return `
-    <div class="fs-note ok">💾 Αποθηκεύεται αυτόματα στο αρχείο «${esc(FS_HANDLE.name || 'projectos.json')}».</div>
+    <div class="fs-note ok">💾 Automatic file backup «${esc(FS_HANDLE.name || 'projectos.json')}».</div>
     <span data-unsaved-indicator style="display:${DIRTY?'':'none'};color:var(--danger,#e2564b);font-weight:600;"></span>
     <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:6px;">
-      <button id="${idPrefix}-btn-save-now">Αποθήκευση τώρα</button>
-      <button id="${idPrefix}-btn-connect-new">Αλλαγή αρχείου…</button>
-      <button id="${idPrefix}-btn-disconnect">Αποσύνδεση</button>
+      <button id="${idPrefix}-btn-save-now">Saving</button>
+      <button id="${idPrefix}-btn-connect-new">Change file…</button>
+      <button id="${idPrefix}-btn-disconnect">Disconnect</button>
     </div>
-    <div style="margin-top:6px;"><button id="${idPrefix}-btn-export">Λήψη αντιγράφου (.json)</button></div>
+    <div style="margin-top:6px;"><button id="${idPrefix}-btn-export">Download File (.json)</button></div>
   `;
 }
 function bindBackupControls(idPrefix){
@@ -542,7 +412,7 @@ function bindBackupControls(idPrefix){
   const trig = document.getElementById(idPrefix+'-btn-import-trigger');
   const file = document.getElementById(idPrefix+'-file-import');
   if(trig && file) trig.addEventListener('click', ()=>{
-    if(DIRTY && !confirm('Η εισαγωγή θα αντικαταστήσει τα τρέχοντα δεδομένα στη μνήμη. Έχεις μη-αποθηκευμένες αλλαγές — συνέχεια χωρίς αποθήκευση;')) return;
+    if(DIRTY && !confirm('The import will replace the connected file. You have got non-saved edits — continue without saving;')) return;
     file.click();
   });
   if(file) file.addEventListener('change', importData);
@@ -551,16 +421,14 @@ function bindBackupControls(idPrefix){
   const connOpen = document.getElementById(idPrefix+'-btn-connect-open');
   if(connOpen) connOpen.addEventListener('click', openAndConnectFile);
   const disc = document.getElementById(idPrefix+'-btn-disconnect');
-  if(disc) disc.addEventListener('click', ()=>{ if(confirm('Αποσύνδεση αρχείου; Οι μελλοντικές αλλαγές δεν θα γράφονται πια αυτόματα εκεί.')) disconnectFile(); });
+  if(disc) disc.addEventListener('click', ()=>{ if(confirm('Disconnect file; Future edits wont save there automatically.')) disconnectFile(); });
   const saveNow = document.getElementById(idPrefix+'-btn-save-now');
-  if(saveNow) saveNow.addEventListener('click', async ()=>{ const ok = await writeStateToFile(); if(ok) toast('Αποθηκεύτηκε στο αρχείο.'); });
+  if(saveNow) saveNow.addEventListener('click', async ()=>{ const ok = await writeStateToFile(); if(ok) toast('File has been saved.'); });
   const reconn = document.getElementById(idPrefix+'-btn-reconnect');
   if(reconn) reconn.addEventListener('click', reconnectPendingHandle);
 }
 
-/* ---------------------------------------------------------------------
-   UTILS
-   --------------------------------------------------------------------- */
+
 const fmtMoney = (v, currency) => {
   const n = Number(v)||0;
   try{
@@ -568,11 +436,7 @@ const fmtMoney = (v, currency) => {
   }catch(e){ return n.toFixed(2)+' '+(currency||'EUR'); }
 };
 
-/* Μορφή ημερομηνίας: dd/mm/yyyy (αριθμητικά, όχι όνομα μήνα). Χτίζουμε τη
-   συμβολοσειρά εμείς οι ίδιοι (padStart) αντί να βασιστούμε σε
-   Intl.DateTimeFormat, ώστε η σειρά ημέρα/μήνας/έτος να είναι εγγυημένη
-   ό,τι browser/locale κι αν έχει ο χρήστης — δεν εξαρτάται από τις
-   ρυθμίσεις γλώσσας του συστήματος. */
+
 const fmtDate = (d) => {
   if(!d) return '—';
   const dt = new Date(d.length===10 ? d+'T00:00:00' : d);
@@ -638,32 +502,28 @@ function autoInvoiceStatus(inv){
   return inv.status || 'unpaid';
 }
 
-/* ---------------------------------------------------------------------
-   REFERENCE OPTIONS (for select dropdowns linking entities)
-   --------------------------------------------------------------------- */
+
 function refOptions(entityKey){
   const list = STATE[entityKey] || [];
   const labelKey = {customers:'name', suppliers:'name', projects:'title', invoices:'invoice_number'}[entityKey] || 'title';
-  return list.map(x => ({ value: x.id, label: x[labelKey] || '(χωρίς τίτλο)' }));
+  return list.map(x => ({ value: x.id, label: x[labelKey] || '(without a title' }));
 }
 function refLabel(entityKey, id){
   if(!id) return '—';
   const list = STATE[entityKey] || [];
   const labelKey = {customers:'name', suppliers:'name', projects:'title', invoices:'invoice_number'}[entityKey] || 'title';
   const item = list.find(x=>x.id===id);
-  return item ? (item[labelKey] || '(χωρίς τίτλο)') : '—';
+  return item ? (item[labelKey] || '(without a title)') : '—';
 }
 
-/* ---------------------------------------------------------------------
-   SCHEMAS — drive the generic add/edit modal + table columns
-   --------------------------------------------------------------------- */
+
 const SCHEMAS = {
   task: {
-    key: 'tasks', label: 'Εργασία', labelPlural: 'Εργασίες', icon:'TSK',
+    key: 'tasks', label: 'Task', labelPlural: 'Tasks', icon:'TSK',
     titleField: 'title',
     fields: [
-      {key:'title', label:'Τίτλος', type:'text', required:true, full:true},
-      {key:'status', label:'Κατάσταση', type:'select', options:[['todo','Εκκρεμεί'],['in_progress','Σε εξέλιξη'],['done','Ολοκληρώθηκε']], default:'todo'},
+      {key:'title', label:'Title', type:'text', required:true, full:true},
+      {key:'status', label:'Status', type:'select', options:[['todo','Εκκρεμεί'],['in_progress','Σε εξέλιξη'],['done','Ολοκληρώθηκε']], default:'todo'},
       {key:'priority', label:'Προτεραιότητα', type:'select', options:[['low','Χαμηλή'],['medium','Μεσαία'],['high','Υψηλή']], default:'medium'},
       {key:'due_date', label:'Προθεσμία', type:'date'},
       {key:'estimated_minutes', label:'Εκτ. λεπτά', type:'number'},
