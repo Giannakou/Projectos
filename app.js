@@ -691,26 +691,23 @@ const SCHEMAS = {
     ]
   },
   integration: {
-    key:'integrations', label:'Σύνδεση', labelPlural:'Συνδέσεις', icon:'INT',
+    key:'integrations', label:'Integrations', labelPlural:'Integrations', icon:'INT',
     titleField:'name',
     fields:[
-      {key:'name', label:'Όνομα', type:'text', required:true, full:true},
-      {key:'provider', label:'Πάροχος', type:'text'},
-      {key:'status', label:'Κατάσταση', type:'select', options:[['planned','Σχεδιασμένη'],['mocked','Mock'],['implemented','Υλοποιημένη'],['tested','Ελεγμένη']], default:'planned'},
-      {key:'direction', label:'Κατεύθυνση', type:'select', options:[['inbound','Εισερχόμενη'],['outbound','Εξερχόμενη'],['bidirectional','Αμφίδρομη']], default:'inbound'},
-      {key:'sync_frequency', label:'Συχνότητα sync', type:'text'},
+      {key:'name', label:'Name', type:'text', required:true, full:true},
+      {key:'provider', label:'Provider', type:'text'},
+      {key:'status', label:'Status', type:'select', options:[['planned','Planned'],['mocked','Mock'],['implemented','Implemented'],['tested','Tested']], default:'planned'},
+      {key:'direction', label:'Direction', type:'select', options:[['inbound','Inbound'],['outbound','Outbound'],['bidirectional','Bidirectional']], default:'inbound'},
+      {key:'sync_frequency', label:'Sync Frequency', type:'text'},
       {key:'auth', label:'Auth', type:'text', default:'OAuth'},
-      {key:'data_in', label:'Δεδομένα εισόδου', type:'textarea', full:true},
-      {key:'data_out', label:'Δεδομένα εξόδου', type:'textarea', full:true},
-      {key:'business_value', label:'Αξία για την επιχείρηση', type:'textarea', full:true},
+      {key:'data_in', label:'Data Input', type:'textarea', full:true},
+      {key:'data_out', label:'Data Output', type:'textarea', full:true},
+      {key:'business_value', label:'Business Value', type:'textarea', full:true},
     ]
   },
 };
 
-/* ---------------------------------------------------------------------
-   GENERIC MODAL — add/edit any entity from its schema
-   --------------------------------------------------------------------- */
-let MODAL_STATE = null; // {schemaKey, id (null=new), draft, checklistDraft}
+let MODAL_STATE = null;
 
 function openModal(schemaKey, id, presets){
   const schema = SCHEMAS[schemaKey];
@@ -721,7 +718,7 @@ function openModal(schemaKey, id, presets){
   } else {
     schema.fields.forEach(f=>{ if('default' in f) data[f.key] = f.default; });
     if(schemaKey === 'task') data.checklist = [];
-    if(presets) Object.assign(data, presets); // π.χ. project_id προ-συμπληρωμένο από το Kanban
+    if(presets) Object.assign(data, presets); 
   }
   MODAL_STATE = { schemaKey, id: id || null, draft: data };
   renderModal();
@@ -741,7 +738,7 @@ function fieldInput(f, value){
   if(f.type === 'ref'){
     let refList = refOptions(f.ref);
     if(f.ref === 'tasks' && MODAL_STATE && MODAL_STATE.id){
-      refList = refList.filter(o => o.value !== MODAL_STATE.id); // μια εργασία δεν εξαρτάται από τον εαυτό της
+      refList = refList.filter(o => o.value !== MODAL_STATE.id); 
     }
     const opts = refList.map(o=>`<option value="${esc(o.value)}" ${o.value===value?'selected':''}>${esc(o.label)}</option>`).join('');
     return `<select data-field="${f.key}"><option value="">—</option>${opts}</select>`;
@@ -753,13 +750,7 @@ function fieldInput(f, value){
     return `<div class="field-check"><input type="checkbox" id="fld_${f.key}" data-field="${f.key}" ${value?'checked':''}><label for="fld_${f.key}">Ναι</label></div>`;
   }
   const step = f.step ? `step="${f.step}"` : '';
-  /* Best-effort υπόδειξη στον browser να δείξει την ημερομηνία σε μορφή
-     ημέρα/μήνας/έτος στο native picker. ΠΡΟΣΟΧΗ: οι περισσότεροι browsers
-     (π.χ. Chrome) αγνοούν το lang σε <input type=date> και ακολουθούν
-     πάντα τις ρυθμίσεις γλώσσας του λειτουργικού συστήματος — αυτό δεν
-     είναι εγγυημένο σε όλους τους browsers. Οι ημερομηνίες που δείχνει
-     ΤΟ ΙΔΙΟ το app (πίνακες, dashboard, badges κ.λπ. μέσω fmtDate/
-     fmtDateShort/fmtDateTime) είναι πάντα dd/mm/yyyy ανεξαρτήτως browser. */
+
   const langAttr = (f.type === 'date' || f.type === 'datetime-local') ? `lang="en-GB"` : '';
   return `<input type="${f.type}" data-field="${f.key}" value="${esc(val)}" placeholder="${esc(f.placeholder||'')}" ${step} ${req} ${langAttr}>`;
 }
@@ -800,7 +791,7 @@ function renderModal(){
     <div class="modal-backdrop" id="modal-backdrop">
       <div class="modal">
         <div class="modal-head">
-          <h3>${isEdit ? 'Επεξεργασία' : 'Νέο'} — ${esc(schema.label)}</h3>
+          <h3>${isEdit ? 'Edit' : 'New'} — ${esc(schema.label)}</h3>
           <button class="modal-close" id="modal-close-btn">✕</button>
         </div>
         <div class="modal-body">
@@ -811,11 +802,11 @@ function renderModal(){
         </div>
         <div class="modal-foot">
           <div>
-            ${isEdit ? `<button class="btn btn-danger btn-sm" id="modal-delete-btn">Διαγραφή</button>` : '<span></span>'}
+            ${isEdit ? `<button class="btn btn-danger btn-sm" id="modal-delete-btn">Delete</button>` : '<span></span>'}
           </div>
           <div style="display:flex; gap:8px;">
-            <button class="btn btn-ghost btn-sm" id="modal-cancel-btn">Άκυρο</button>
-            <button class="btn btn-primary btn-sm" id="modal-save-btn">Αποθήκευση</button>
+            <button class="btn btn-ghost btn-sm" id="modal-cancel-btn">Cancel</button>
+            <button class="btn btn-primary btn-sm" id="modal-save-btn">Save</button>
           </div>
         </div>
       </div>
@@ -866,10 +857,10 @@ function renderModal(){
   document.getElementById('modal-save-btn').addEventListener('click', saveModal);
   if(isEdit){
     document.getElementById('modal-delete-btn').addEventListener('click', ()=>{
-      if(confirm('Σίγουρα θέλεις να διαγραφεί; Δεν αναιρείται.')){
+      if(confirm('Are you sure you want this to get deleted? This edit cannot be undone.')){
         STATE[schema.key] = STATE[schema.key].filter(x=>x.id !== MODAL_STATE.id);
         saveState();
-        toast(schema.label + ' διαγράφηκε.');
+        toast(schema.label + ' Deleted.');
         closeModal();
         render();
       }
@@ -877,7 +868,7 @@ function renderModal(){
   }
 }
 function autoCalcAmounts(){
-  // for transaction / invoice forms: auto-fill gross = net + vat when both present and gross untouched-ish
+  // Transactions - Invoice //
   const d = MODAL_STATE.draft;
   if(['transaction','invoice'].includes(MODAL_STATE.schemaKey)){
     const net = parseFloat(d.net_amount), vat = parseFloat(d.vat_amount);
@@ -894,7 +885,7 @@ function saveModal(){
   // required validation
   for(const f of schema.fields){
     if(f.required && !draft[f.key]){
-      toast('Συμπλήρωσε το πεδίο: ' + f.label, true);
+      toast('Fill in the field: ' + f.label, true);
       return;
     }
   }
@@ -908,11 +899,11 @@ function saveModal(){
     const idx = STATE[schema.key].findIndex(x=>x.id===MODAL_STATE.id);
     draft.id = MODAL_STATE.id;
     STATE[schema.key][idx] = draft;
-    toast(schema.label + ' ενημερώθηκε.');
+    toast(schema.label + ' Updated.');
   } else {
     draft.id = uid(schema.key.slice(0,3));
     STATE[schema.key].push(draft);
-    toast(schema.label + ' προστέθηκε.');
+    toast(schema.label + ' Added.');
   }
   saveState();
   closeModal();
@@ -924,7 +915,7 @@ function saveModal(){
    --------------------------------------------------------------------- */
 let ROUTE = { view: 'dashboard', tab: null };
 let SEARCH = {};
-let MORE_OPEN = false; // αν είναι ανοιχτό το "Περισσότερα" bottom sheet (mobile)
+let MORE_OPEN = false; 
 
 function parseHash(){
   const h = location.hash.replace(/^#\/?/, '');
@@ -935,31 +926,31 @@ function parseHash(){
 window.addEventListener('hashchange', ()=>{ parseHash(); render(); });
 
 const NAV = [
-  { group: 'Σήμερα', items: [
+  { group: 'Today', items: [
     { view:'dashboard', label:'Cockpit', ico:'◆' },
   ]},
-  { group: 'Δουλειά', items: [
-    { view:'tasks', label:'Εργασίες', ico:'☐', badgeFn: ()=>STATE.tasks.filter(t=>t.status!=='done').length },
-    { view:'calendar', label:'Ημερολόγιο', ico:'▤' },
-    { view:'projects', label:'Έργα', ico:'▦' },
+  { group: 'Work', items: [
+    { view:'tasks', label:'Tasks', ico:'☐', badgeFn: ()=>STATE.tasks.filter(t=>t.status!=='done').length },
+    { view:'calendar', label:'Calendar', ico:'▤' },
+    { view:'projects', label:'Projects', ico:'▦' },
   ]},
-  { group: 'Χρήμα', items: [
-    { view:'money', tab:'transactions', label:'Συναλλαγές', ico:'€' },
-    { view:'money', tab:'invoices', label:'Τιμολόγια', ico:'⌸', badgeFn: ()=>STATE.invoices.filter(i=>autoInvoiceStatus(i)==='overdue').length, hot:true },
-    { view:'money', tab:'payments', label:'Πληρωμές', ico:'⇄' },
+  { group: 'Money', items: [
+    { view:'money', tab:'transactions', label:'Transactions', ico:'€' },
+    { view:'money', tab:'invoices', label:'Invoices', ico:'⌸', badgeFn: ()=>STATE.invoices.filter(i=>autoInvoiceStatus(i)==='overdue').length, hot:true },
+    { view:'money', tab:'payments', label:'Payments', ico:'⇄' },
   ]},
-  { group: 'Στρατηγική', items: [
-    { view:'goals', label:'Στόχοι & KPI', ico:'◎' },
+  { group: 'Strategy', items: [
+    { view:'goals', label:'Goals & KPIs', ico:'◎' },
   ]},
-  { group: 'Σχέσεις', items: [
-    { view:'crm', tab:'customers', label:'Πελάτες', ico:'●' },
-    { view:'crm', tab:'suppliers', label:'Προμηθευτές', ico:'○' },
+  { group: 'Relationships', items: [
+    { view:'crm', tab:'customers', label:'Customer', ico:'●' },
+    { view:'crm', tab:'suppliers', label:'Suppliers', ico:'○' },
   ]},
-  { group: 'Προσοχή', items: [
-    { view:'alerts', label:'Ειδοποιήσεις', ico:'!', badgeFn: ()=>STATE.alerts.filter(a=>a.status==='open').length, hot:true },
-    { view:'integrations', label:'Συνδέσεις', ico:'⇌' },
+  { group: 'Notificato', items: [
+    { view:'alerts', label:'Alert', ico:'!', badgeFn: ()=>STATE.alerts.filter(a=>a.status==='open').length, hot:true },
+    { view:'integrations', label:'Integrations', ico:'⇌' },
   ]},
-  { group: 'Ρυθμίσεις', items: [
+  { group: 'Settings', items: [
     { view:'settings', label:'Owner & Business', ico:'⚙' },
   ]},
 ];
@@ -982,15 +973,15 @@ function renderSidebar(){
     <div class="sidebar">
       <div class="brand">
         <div class="mark"><div class="dot"></div><div class="name">ProjectOS</div></div>
-        <div class="sub">Owner Cockpit</div>
+        <div class="sub">Owner Dashboard</div>
       </div>
       <div class="nav">${groups}</div>
       <div class="sidebar-foot">
-        ${esc(STATE.business.name || 'Χωρίς όνομα επιχείρησης')} ${FS_HANDLE ? ' · αποθηκεύεται σε αρχείο' : ' · μόνο στη μνήμη (session)'}
+        ${esc(STATE.business.name || 'Business without name')} ${FS_HANDLE ? ' · saving in file' : ' · cache only (session)'}
         ${backupControlsHtml('sb')}
         <div style="margin-top:6px;">
            
-          <button id="btn-wipe">διαγραφή όλων</button>
+          <button id="btn-wipe">wipe</button>
         </div>
       </div>
     </div>
